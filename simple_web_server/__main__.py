@@ -1,4 +1,5 @@
 import http.server
+import os
 
 
 class RequestHandler(http.server.BaseHTTPRequestHandler):
@@ -7,40 +8,29 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
     """
 
     def do_GET(self) -> None:
-        page = self.create_page()
-        self.send_page(page)
+        try:
+            full_path = os.getcwd() + self.path
+            if not os.path.exists(full_path):
+                self.send_error(404, f"File not found: {full_path}")
+            else:
+                self.send_file(full_path)
+        except Exception as e:
+            self.send_error(404, str(e))
 
-    def create_page(self) -> str:
-        values = {
-            "date_time": self.date_time_string(),
-            "client_host": self.client_address[0],
-            "client_port": self.client_address[1],
-            "command": self.command,
-            "path": self.path,
-        }
-        return """\
-        <html>
-        <body>
-        <table>
-        <tr>  <td>Header</td>         <td>Value</td>          </tr>
-        <tr>  <td>Date and time</td>  <td>{date_time}</td>    </tr>
-        <tr>  <td>Client host</td>    <td>{client_host}</td>  </tr>
-        <tr>  <td>Client port</td>    <td>{client_port}s</td> </tr>
-        <tr>  <td>Command</td>        <td>{command}</td>      </tr>
-        <tr>  <td>Path</td>           <td>{path}</td>         </tr>
-        </table>
-        </body>
-        </html>
-        """.format(
-            **values
-        )
+    def send_file(self, full_path: str) -> None:
+        try:
+            with open(full_path, "rb") as file:
+                content = file.read()
+                self.send_content(content)
+        except Exception as e:
+            raise Exception(f"Error reading file: {e}") from e
 
-    def send_page(self, page: str) -> None:
+    def send_content(self, content: bytes) -> None:
         self.send_response(200)
         self.send_header("Content-type", "text/html")
-        self.send_header("Content-Length", str(len(page)))
+        self.send_header("Content-Length", str(len(content)))
         self.end_headers()
-        self.wfile.write(page.encode("utf-8"))
+        self.wfile.write(content)
 
 
 if __name__ == "__main__":
