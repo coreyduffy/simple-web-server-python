@@ -1,22 +1,24 @@
 import http.server
 
+
 class RequestHandler(http.server.BaseHTTPRequestHandler):
     """
     Handle GET requests by returning a fixed HTML page.
     """
-    def do_GET(self):
+
+    def do_GET(self) -> None:
         page = self.create_page()
         self.send_page(page)
-    
-    def create_page(self):
+
+    def create_page(self) -> str:
         values = {
-            'date_time'   : self.date_time_string(),
-            'client_host' : self.client_address[0],
-            'client_port' : self.client_address[1],
-            'command'     : self.command,
-            'path'        : self.path
+            "date_time": self.date_time_string(),
+            "client_host": self.client_address[0],
+            "client_port": self.client_address[1],
+            "command": self.command,
+            "path": self.path,
         }
-        return '''\
+        return """\
         <html>
         <body>
         <table>
@@ -29,16 +31,19 @@ class RequestHandler(http.server.BaseHTTPRequestHandler):
         </table>
         </body>
         </html>
-        '''.format(**values)
-    
-    def send_page(self, page):
+        """.format(
+            **values
+        )
+
+    def send_page(self, page: str) -> None:
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.send_header("Content-Length", str(len(page)))
         self.end_headers()
-        self.wfile.write(page.encode('utf-8'))
+        self.wfile.write(page.encode("utf-8"))
 
-if __name__ == '__main__':
-    serverAddress = ('', 8080)
-    server = http.server.HTTPServer(serverAddress, RequestHandler)
+
+if __name__ == "__main__":
+    server_address = ("", 8080)
+    server = http.server.HTTPServer(server_address, RequestHandler)
     server.serve_forever()
