@@ -1,7 +1,8 @@
 # Simple Web Server
 
-A simple Python web server implementation.
-The web server will return files that are found from the current director where the server is running.
+A simple Python web server implementation, inspired by https://aosabook.org/en/500L/a-simple-web-server.html.
+
+The web server will return files that are found from the current directory where the server is running.
 
 ## Running the server
 You can run the server via the commands below from the project root directory:
