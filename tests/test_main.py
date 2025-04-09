@@ -1,20 +1,11 @@
 import io
 import os
-import socket
-import tempfile
 from typing import Any, BinaryIO
 
 import pytest
 
+# Only import main RequestHandler for integration tests
 from simple_web_server.__main__ import RequestHandler
-
-
-class MockRequest:
-    """Mock request class to simulate HTTP requests."""
-
-    def __init__(self, path: str = "/", command: str = "GET") -> None:
-        self.path = path
-        self.command = command
 
 
 class MockSocket:
@@ -30,7 +21,8 @@ class MockSocket:
         self, mode: str = "rb", buffering: int = -1, **kwargs: Any
     ) -> BinaryIO:
         """Mock makefile method to simulate socket file operations."""
-        return io.BytesIO(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        # Provide minimal valid HTTP request line + header for parsing during init
+        return io.BytesIO(b"GET / HTTP/1.0\r\nHost: dummy\r\n\r\n")
 
 
 class MockServer:
@@ -40,13 +32,6 @@ class MockServer:
         self.server_address = ("localhost", 8080)
 
 
-def find_free_port() -> int:
-    """Find a free port to use for testing."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture
 def mock_socket() -> MockSocket:
     """Fixture to provide a mock socket for testing."""
@@ -54,122 +39,99 @@ def mock_socket() -> MockSocket:
 
 
 @pytest.fixture
-def request_handler(mock_socket: MockSocket) -> RequestHandler:
-    """Fixture to provide a RequestHandler instance with mocked socket."""
+def request_handler_instance(mock_socket: MockSocket) -> RequestHandler:
+    """Fixture to provide a REAL RequestHandler instance for integration tests.
+    Allows normal BaseHTTPRequestHandler init to parse the dummy request.
+    """
     server = MockServer()
+    # Initialize normally.
     handler = RequestHandler(mock_socket, ("127.0.0.1", 12345), server)
     return handler
 
 
-@pytest.fixture
-def temp_file() -> str:
-    """Fixture to create a temporary file for testing."""
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        f.write(b"<html><body>Test content</body></html>")
-        return f.name
+# --- Integration Tests for RequestHandler.do_GET ---
+# (These tests will automatically use temp_file and temp_dir from conftest.py)
 
 
-def test_send_page(request_handler: RequestHandler, mock_socket: MockSocket) -> None:
-    """Test that send_page correctly sends HTTP headers and content."""
-    # Given
-    test_page: bytes = b"<html><body>Test</body></html>"
-
-    # When
-    request_handler.send_content(test_page)
-
-    # Then
-    sent_data = mock_socket.buffer.getvalue().decode("utf-8")
-    assert "HTTP/1.0 200 OK" in sent_data
-    assert "Content-type: text/html" in sent_data
-    assert "Content-Length: 30" in sent_data
-    assert test_page.decode("utf-8") in sent_data
-
-
-def test_do_get_file_exists(
-    request_handler: RequestHandler, mock_socket: MockSocket, temp_file: str
+def test_do_get_integration_file_exists(
+    request_handler_instance: RequestHandler, mock_socket: MockSocket, temp_file: str
 ) -> None:
-    """Test that do_GET correctly serves an existing file."""
+    """Integration test: do_GET correctly serves an existing file."""
     # Given
-    request_handler.path = "/" + os.path.basename(temp_file)
+    file_name = os.path.basename(temp_file)
+    request_handler_instance.path = f"/{file_name}"
     original_cwd = os.getcwd()
     os.chdir(os.path.dirname(temp_file))
+    mock_socket.buffer = io.BytesIO()
 
     try:
         # When
-        request_handler.do_GET()
+        request_handler_instance.do_GET()
 
         # Then
-        sent_data = mock_socket.buffer.getvalue().decode("utf-8")
-        assert "HTTP/1.0 200 OK" in sent_data
-        assert "Content-type: text/html" in sent_data
-        assert "Content-Length: 38" in sent_data
-        assert "<html><body>Test content</body></html>" in sent_data
+        sent_data = mock_socket.buffer.getvalue()
+        assert b"HTTP/1.0 200 OK" in sent_data
+        assert b"Content-type: text/html" in sent_data
+        assert b"Content-Length: 38" in sent_data
+        assert b"<html><body>Test content</body></html>" in sent_data
     finally:
         os.chdir(original_cwd)
-        os.unlink(temp_file)
 
 
-def test_do_get_file_not_found(
-    request_handler: RequestHandler, mock_socket: MockSocket
+def test_do_get_integration_directory(
+    request_handler_instance: RequestHandler, mock_socket: MockSocket, temp_dir: str
 ) -> None:
-    """Test that do_GET returns 404 for non-existent files."""
+    """Integration test: do_GET correctly lists directory contents."""
     # Given
-    request_handler.path = "/nonexistent.html"
+    dir_name = os.path.basename(temp_dir)
+    request_handler_instance.path = f"/{dir_name}/"
+    original_cwd = os.getcwd()
+    os.chdir(os.path.dirname(temp_dir))
+    mock_socket.buffer = io.BytesIO()
+
+    try:
+        # When
+        request_handler_instance.do_GET()
+
+        # Then
+        sent_data = mock_socket.buffer.getvalue()
+        assert b"HTTP/1.0 200 OK" in sent_data
+        assert b"Content-type: text/html; charset=utf-8" in sent_data
+        assert f"Directory listing for /{dir_name}/".encode() in sent_data
+        assert b"file1.html" in sent_data
+        assert b"file2.txt" in sent_data
+        assert b"subdir/" in sent_data
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_do_get_integration_not_found(
+    request_handler_instance: RequestHandler, mock_socket: MockSocket
+) -> None:
+    """Integration test: do_GET returns 404 for non-existent resource."""
+    # Given
+    request_handler_instance.path = "/nonexistent/thing.no"
+    mock_socket.buffer = io.BytesIO()
 
     # When
-    request_handler.do_GET()
-
-    # Then
-    sent_data = mock_socket.buffer.getvalue().decode("utf-8")
-    assert "HTTP/1.0 404 Error reading file:" in sent_data
-
-
-def test_send_file(
-    request_handler: RequestHandler, mock_socket: MockSocket, temp_file: str
-) -> None:
-    """Test that send_file correctly reads and sends file content."""
-    # When
-    request_handler.send_file(temp_file)
-
-    # Then
-    sent_data = mock_socket.buffer.getvalue().decode("utf-8")
-    assert "HTTP/1.0 200 OK" in sent_data
-    assert "Content-type: text/html" in sent_data
-    assert "Content-Length: 38" in sent_data
-    assert "<html><body>Test content</body></html>" in sent_data
-
-    # Cleanup
-    os.unlink(temp_file)
-
-
-def test_send_file_error(
-    request_handler: RequestHandler, mock_socket: MockSocket
-) -> None:
-    """Test that send_file raises an exception for file reading errors."""
-    # Given
-    nonexistent_file = "/nonexistent/file.html"
-
-    # When-Then
-    with pytest.raises(Exception) as exc_info:
-        request_handler.send_file(nonexistent_file)
-    assert "Error reading file:" in str(exc_info.value)
-
-
-def test_send_content(request_handler: RequestHandler, mock_socket: MockSocket) -> None:
-    """Test that send_content correctly sends HTTP headers and content."""
-    # Given
-    test_content = b"<html><body>Test</body></html>"
-
-    # When
-    request_handler.send_content(test_content)
+    request_handler_instance.do_GET()
 
     # Then
     sent_data = mock_socket.buffer.getvalue()
-    assert b"HTTP/1.0 200 OK" in sent_data
-    assert b"Content-type: text/html" in sent_data
-    assert b"Content-Length: 30" in sent_data
-    assert test_content in sent_data
+    assert sent_data.startswith(
+        b"HTTP/1.0 404 "
+    ), f"Expected status line starting with 'HTTP/1.0 404 ', got: {sent_data[:50]}..."
+    expected_header = b"Content-Type: text/html"
+    assert expected_header in sent_data, (
+        f"Expected '{expected_header.decode()}' header, "
+        f"check response headers: {sent_data[:200]}..."
+    )
+    assert b"File/Directory not found: /nonexistent/thing.no" in sent_data
+
+
+# --- Unit tests for handlers are now in tests/resource_handlers/ ---
 
 
 if __name__ == "__main__":
-    pytest.main()
+    # If running this file directly, run pytest on the whole tests directory
+    pytest.main(["tests"])
